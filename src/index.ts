@@ -1,5 +1,6 @@
 import { Plugin } from "@opencode/plugin"
 import type { Context as PluginContext } from "@opencode/plugin/promise/plugin"
+import { workerPrompt } from "./prompt.js"
 
 type Worker = { id: string; model: string; variant?: string }
 type WorkerResult =
@@ -117,7 +118,7 @@ async function runWorker(
     // Prompt admission is durable. Do not abort this request: an abort can race with
     // admission, in which case the first interrupt is an idle no-op. Once admission
     // returns, send a second interrupt if necessary.
-    await ctx.session.prompt({ sessionID: createdSessionID, text: prompt })
+    await ctx.session.prompt({ sessionID: createdSessionID, text: workerPrompt(prompt) })
     if (signal.aborted) {
       cancel()
       return failure(worker, "cancelled", createdSessionID)

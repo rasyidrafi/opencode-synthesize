@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest"
 import plugin, { WORKER_PERMISSIONS } from "../src/index.js"
+import { workerPrompt } from "../src/prompt.js"
 
 type CapturedTool = { execute: (input: unknown, context: unknown) => Promise<any> }
 
@@ -52,6 +53,18 @@ function toolContext(signal = new AbortController().signal) {
 }
 
 describe("synthesize", () => {
+  it("wraps the original request with a structured answer format", () => {
+    const prompt = "Compare two approaches. Do not modify files."
+    const wrapped = workerPrompt(prompt)
+    expect(wrapped).toContain(`<request>\n${prompt}\n</request>`)
+    expect(wrapped).toContain("## Conclusion")
+    expect(wrapped).toContain("## Analysis")
+    expect(wrapped).toContain("## Evidence")
+    expect(wrapped).toContain("## Risks and Uncertainty")
+    expect(wrapped).toContain("## Recommendation")
+    expect(wrapped).toContain("Omit sections that do not apply")
+  })
+
   it("runs every worker in parallel with its model, variant, invoking location, and exact permissions", async () => {
     const waits: Array<ReturnType<typeof deferred<void>>> = []
     const { tool, context } = await install(
@@ -101,7 +114,9 @@ describe("synthesize", () => {
         permissions: WORKER_PERMISSIONS,
       },
     ])
-    expect(context.session.prompt.mock.calls.map(([input]: any[]) => input.text)).toEqual(["evaluate this", "evaluate this"])
+    expect(context.session.prompt.mock.calls.map(([input]: any[]) => input.text)).toEqual([
+      workerPrompt("evaluate this"), workerPrompt("evaluate this"),
+    ])
 
     waits.forEach((gate) => gate.resolve(undefined))
     const result = await resultPromise

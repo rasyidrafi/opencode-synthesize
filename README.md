@@ -3,6 +3,9 @@
 An OpenCode V2 plugin exposing a `synthesize` tool. It sends its sole `prompt`
 argument to every configured worker model in parallel, then returns each worker's
 final assistant response. Worker failures are reported with successful opinions.
+The plugin wraps the request in a Markdown answer format covering conclusion,
+analysis, evidence, risks, and recommendation where relevant. It returns each worker's
+response as text, without parsing or rewriting its structure.
 
 ## Configure
 
