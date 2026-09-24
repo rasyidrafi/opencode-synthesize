@@ -2,11 +2,13 @@
   "name": "opencode-synthesize",
   "version": "0.1.0",
   "type": "module",
+  "main": "./index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
   "files": [
-    "src"
+    "src",
+    "index.ts"
   ],
   "scripts": {
     "test": "vitest run",

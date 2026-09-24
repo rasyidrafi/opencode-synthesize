@@ -35,6 +35,12 @@ redacted from worker responses and errors, including tool metadata, before the
 calling agent sees them. The actual worker sessions still retain their model
 selection in OpenCode.
 
+For local testing, set `package` to this repository's absolute directory path
+instead of `opencode-synthesize`. The root `index.ts` entrypoint supports V2's
+local-directory plugin loader; the published package exports `src/index.ts`.
+If the calling agent uses deny-all permissions, it also needs permission to
+invoke `synthesize`; worker permissions do not grant access to the caller.
+
 ## Worker access and limits
 
 Each worker is a separate `general` session at the invoking session's location.
