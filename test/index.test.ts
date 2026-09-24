@@ -17,8 +17,20 @@ function deferred<T = void>() {
 async function install(options: unknown, overrides: Record<string, unknown> = {}) {
   let captured: CapturedTool | undefined
   let sequence = 0
+  const stored = new Map<string, unknown>()
   const context = {
     options,
+    agent: {
+      list: vi.fn(async () => ({ data: [] })),
+      transform: vi.fn(async (callback: (editor: { get(id: string): unknown; update(id: string, edit: (agent: any) => void): void }) => void) => {
+        callback({ get: () => undefined, update: () => { throw new Error("missing agent cannot be updated") } })
+      }),
+    },
+    event: { subscribe: async function* () {} },
+    storage: {
+      get: vi.fn(async (key: string) => stored.get(key)),
+      set: vi.fn(async (key: string, value: unknown) => { stored.set(key, value) }),
+    },
     location: { directory: "/plugin-location" },
     tool: {
       transform: async (callback: (editor: { add(tool: CapturedTool): void }) => void) => {
@@ -53,6 +65,116 @@ function toolContext(signal = new AbortController().signal) {
 }
 
 describe("synthesize", () => {
+  it("waits for a synthesizer defined after plugin setup, and skips when absent", async () => {
+    const changed = deferred<void>()
+    let available = false
+    const synthesizer = { system: "", permissions: [], description: "" }
+    const agent = {
+      list: vi.fn(async () => ({ data: available ? [{ id: "synthesizer" }] : [] })),
+      transform: vi.fn(async (callback: (editor: any) => void) => callback({
+        get: (id: string) => id === "synthesizer" ? synthesizer : undefined,
+        update: (_id: string, edit: (value: typeof synthesizer) => void) => edit(synthesizer),
+      })),
+    }
+    const event = { subscribe: async function* () {
+      await changed.promise
+      yield { type: "agent.updated" }
+    } }
+    await install({ workers: [{ model: "alpha/one" }] }, { agent, event })
+    await vi.waitFor(() => expect(agent.list).toHaveBeenCalled())
+    expect(agent.transform).not.toHaveBeenCalled()
+    available = true
+    changed.resolve(undefined)
+    await vi.waitFor(() => expect(agent.transform).toHaveBeenCalledTimes(1))
+    expect(synthesizer.permissions).toHaveLength(6)
+  })
+
+  it("updates an existing synthesizer agent without replacing its existing instructions", async () => {
+    const synthesizer = { system: "Follow project conventions.", permissions: [], description: "Original", mode: "primary" }
+    const agent = {
+      list: vi.fn(async () => ({ data: [{ id: "synthesizer" }] })),
+      transform: vi.fn(async (callback: (editor: any) => void) => callback({
+        get: (id: string) => id === "synthesizer" ? synthesizer : undefined,
+        update: (id: string, edit: (value: typeof synthesizer) => void) => {
+          expect(id).toBe("synthesizer")
+          edit(synthesizer)
+        },
+      })),
+    }
+    await install({ workers: [{ model: "alpha/one" }] }, { agent })
+    await vi.waitFor(() => expect(agent.transform).toHaveBeenCalledTimes(1))
+    expect(synthesizer.permissions).toEqual([
+      ...WORKER_PERMISSIONS,
+      { action: "synthesize", resource: "*", effect: "allow" },
+    ])
+    expect(synthesizer.system).toContain("Follow project conventions.")
+    expect(synthesizer.system).toContain("Treat worker opinions as evidence")
+    expect(synthesizer.system).toContain("Do not edit files, run state-changing shell commands")
+    expect(synthesizer.description).toContain("Use when independent opinions")
+    expect(synthesizer.description).toContain("Do not use for implementing changes")
+    expect(synthesizer.mode).toBe("subagent")
+  })
+
+  it("continues each worker in the same caller session and isolates other callers", async () => {
+    let created = 0
+    const session = {
+      get: vi.fn(async ({ sessionID }: { sessionID: string }) => sessionID.startsWith("ses-caller")
+        ? { location: { directory: "/calling-project" } }
+        : { location: { directory: "/calling-project" }, outcome: "succeeded" }),
+      create: vi.fn(async () => ({ id: `ses-worker-${++created}` })),
+      prompt: vi.fn(async () => undefined),
+      wait: vi.fn(async () => undefined),
+      context: vi.fn(async () => [
+        { type: "assistant", content: [{ type: "text", text: "answer" }] },
+        { type: "idle", outcome: "succeeded" },
+      ]),
+      interrupt: vi.fn(async () => undefined),
+    }
+    const { tool, context } = await install({ workers: [
+      { id: "a", model: "alpha/one" }, { id: "b", model: "alpha/two" },
+    ] }, { session })
+    const call = (caller: string, prompt: string) => tool.execute({ prompt }, { sessionID: caller, signal: new AbortController().signal })
+    await call("ses-caller-1", "first")
+    await call("ses-caller-1", "follow up")
+    expect(session.create).toHaveBeenCalledTimes(2)
+    expect(session.prompt.mock.calls.map(([input]: any[]) => input.sessionID)).toEqual([
+      "ses-worker-1", "ses-worker-2", "ses-worker-1", "ses-worker-2",
+    ])
+    expect((session.prompt.mock.calls as unknown as Array<[{ text: string }]>)[2]?.[0].text).toContain("follow up")
+    await call("ses-caller-2", "new work")
+    expect(session.create).toHaveBeenCalledTimes(4)
+    expect(context.storage.set).toHaveBeenCalledWith("sessions/ses-caller-1/workers", [
+      { id: "a", model: "alpha/one", sessionID: "ses-worker-1" },
+      { id: "b", model: "alpha/two", sessionID: "ses-worker-2" },
+    ])
+  })
+
+  it("serializes overlapping calls from one caller before reusing worker sessions", async () => {
+    const gate = deferred<void>()
+    const session = {
+      get: vi.fn(async ({ sessionID }: { sessionID: string }) => sessionID === "ses-parent"
+        ? { location: { directory: "/calling-project" } }
+        : { location: { directory: "/calling-project" }, outcome: "succeeded" }),
+      create: vi.fn(async () => ({ id: "ses-worker-1" })),
+      prompt: vi.fn(async () => undefined),
+      wait: vi.fn().mockImplementationOnce(() => gate.promise).mockImplementation(async () => undefined),
+      context: vi.fn(async () => [
+        { type: "assistant", content: [{ type: "text", text: "answer" }] },
+        { type: "idle", outcome: "succeeded" },
+      ]),
+      interrupt: vi.fn(async () => undefined),
+    }
+    const { tool } = await install({ workers: [{ id: "a", model: "alpha/one" }] }, { session })
+    const first = tool.execute({ prompt: "first" }, toolContext())
+    await vi.waitFor(() => expect(session.wait).toHaveBeenCalledTimes(1))
+    const second = tool.execute({ prompt: "second" }, toolContext())
+    expect(session.prompt).toHaveBeenCalledTimes(1)
+    gate.resolve(undefined)
+    await Promise.all([first, second])
+    expect(session.create).toHaveBeenCalledTimes(1)
+    expect(session.prompt).toHaveBeenCalledTimes(2)
+  })
+
   it("wraps the original request with a structured answer format", () => {
     const prompt = "Compare two approaches. Do not modify files."
     const wrapped = workerPrompt(prompt)

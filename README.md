@@ -6,6 +6,13 @@ final assistant response. Worker failures are reported with successful opinions.
 The plugin wraps the request in a Markdown answer format covering conclusion,
 analysis, evidence, risks, and recommendation where relevant. It returns each worker's
 response as text, without parsing or rewriting its structure.
+For repeated calls from the same calling session, each successful worker
+continues its prior session with the new prompt. The mapping is stored durably
+by the plugin, so the tool still takes only `prompt` and does not expose worker
+session IDs. A new calling session gets new workers; changed models/variants,
+missing sessions, and failed workers are replaced on the next call. Overlapping
+calls from one calling session are queued, while workers within each call run
+in parallel.
 
 ## Configure
 
@@ -22,7 +29,10 @@ response as text, without parsing or rewriting its structure.
         ]
       }
     }
-  ]
+  ],
+  "agents": {
+    "synthesizer": { "mode": "subagent" }
+  }
 }
 ```
 
@@ -43,6 +53,13 @@ instead of `opencode-synthesize`. The root `index.ts` entrypoint supports V2's
 local-directory plugin loader; the published package exports `src/index.ts`.
 If the calling agent uses deny-all permissions, it also needs permission to
 invoke `synthesize`; worker permissions do not grant access to the caller.
+When an agent named `synthesizer` exists, the plugin updates it on load: it
+sets its mode to `subagent`, provides a read-only use-when description,
+keeps any existing system instructions, adds read-only synthesis guidance, and
+sets deny-all permissions with only `shell`, `read`, `skill`,
+`external_directory`, and `synthesize` allowed. If that agent is absent, the
+plugin leaves agents unchanged. The tool remains registered globally; other
+agents' existing permissions still determine whether they can call it.
 
 ## Worker access and limits
 
