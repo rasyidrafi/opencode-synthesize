@@ -61,6 +61,14 @@ sets deny-all permissions with only `shell`, `read`, `skill`,
 plugin leaves agents unchanged. The tool remains registered globally; other
 agents' existing permissions still determine whether they can call it.
 
+The plugin also registers the `synthesize-rule` skill from
+`skills/synthesize-rule/SKILL.md` in OpenCode's skill catalog. For the main
+agent, it mirrors the General → review → fix loop using `synthesizer` for
+read-only review and reusing the same subagent sessions within each phase.
+For `synthesizer`, it defers to the agent's system instructions; other agents
+ignore the skill. This is a
+runtime registration; it does not copy files into the user's global config.
+
 ## Worker access and limits
 
 Each worker is a separate `general` session at the invoking session's location.

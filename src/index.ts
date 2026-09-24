@@ -1,5 +1,7 @@
-import { Plugin } from "@opencode/plugin"
+import { Plugin, Skill } from "@opencode/plugin"
 import type { Context as PluginContext } from "@opencode/plugin/promise/plugin"
+import { readFile } from "node:fs/promises"
+import { fileURLToPath } from "node:url"
 import { workerPrompt } from "./prompt.js"
 
 type Worker = { id: string; model: string; variant?: string }
@@ -49,6 +51,17 @@ export default Plugin.define({
   id: "synthesize",
   async setup(ctx) {
     const pending = new Map<string, Promise<void>>()
+    const skillPath = fileURLToPath(new URL("../skills/synthesize-rule/SKILL.md", import.meta.url))
+    const skillContent = (await readFile(skillPath, "utf8")).replace(/^---\n[\s\S]*?\n---\n\s*/, "")
+    await ctx.skill.transform((editor) => {
+      editor.add({
+        id: Skill.ID.make("synthesize-rule"),
+        name: Skill.Name.make("Synthesize Rule"),
+        description: "Use when the main agent delegates repository work in phases and needs read-only synthesis of independent opinions to review each phase before proceeding.",
+        path: skillPath as Skill.Info["path"],
+        content: skillContent,
+      })
+    })
     let workers: Worker[] | string
     try {
       workers = parseWorkers(ctx.options)

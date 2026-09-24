@@ -20,6 +20,11 @@ async function install(options: unknown, overrides: Record<string, unknown> = {}
   const stored = new Map<string, unknown>()
   const context = {
     options,
+    skill: {
+      transform: vi.fn(async (callback: (editor: { add(skill: unknown): void }) => void) => {
+        callback({ add: () => undefined })
+      }),
+    },
     agent: {
       list: vi.fn(async () => ({ data: [] })),
       transform: vi.fn(async (callback: (editor: { get(id: string): unknown; update(id: string, edit: (agent: any) => void): void }) => void) => {
@@ -65,6 +70,28 @@ function toolContext(signal = new AbortController().signal) {
 }
 
 describe("synthesize", () => {
+  it("registers a packaged synthesize-rule skill for the main agent", async () => {
+    const added: unknown[] = []
+    const skill = { transform: vi.fn(async (callback: (editor: { add(value: unknown): void }) => void) => {
+      callback({ add: (value) => added.push(value) })
+    }) }
+    await install({ workers: [{ model: "alpha/one" }] }, { skill })
+    expect(added).toHaveLength(1)
+    expect(added[0]).toMatchObject({
+      id: "synthesize-rule",
+      name: "Synthesize Rule",
+      path: expect.stringContaining("skills/synthesize-rule/SKILL.md"),
+      description: expect.stringContaining("main agent"),
+      content: expect.stringContaining("Same phase/slice = same General session + same Synthesizer session"),
+    })
+    const content = (added[0] as { content: string }).content
+    expect(content).toContain("**Main agent:** follow the workflow below")
+    expect(content).toContain("**Synthesizer agent:** follow your system instructions")
+    expect(content).toContain("**Any other agent:** ignore this skill")
+    expect(content).toContain("General (same session)")
+    expect(content).toContain("Synthesizer (same session)")
+  })
+
   it("waits for a synthesizer defined after plugin setup, and skips when absent", async () => {
     const changed = deferred<void>()
     let available = false
